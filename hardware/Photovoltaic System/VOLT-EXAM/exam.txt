@@ -1,0 +1,50 @@
+线程操作kernel/liteos_m/kernel/include/los_task.h
+任务生命周期管理
+LOS_TaskCreate() - 创建任务并加入就绪队列
+LOS_TaskCreateOnly() - 创建任务但挂起（不加入就绪队列）
+LOS_TaskDelete() - 删除任务
+LOS_TaskJoin() - 等待子任务结束并回收资源
+LOS_TaskDetach() - 分离任务（不可被join）
+
+任务调度控制
+LOS_TaskDelay() - 延时当前任务（Tick为单位）
+LOS_Msleep() - 延时当前任务（毫秒为单位）
+LOS_TaskSuspend() - 挂起任务
+LOS_TaskResume() - 恢复挂起的任务
+LOS_TaskYield() - 让出CPU给同优先级任务
+LOS_TaskLock() / LOS_TaskUnlock() - 锁定/解锁任务调度
+
+任务信息获取
+LOS_CurTaskIDGet() - 获取当前任务ID
+LOS_CurTaskNameGet() - 获取当前任务名称
+LOS_TaskPriGet() - 获取任务优先级
+LOS_TaskPriSet() - 设置任务优先级
+LOS_TaskInfoGet() - 获取任务详细信息
+LOS_TaskStatusGet() - 获取任务状态
+
+
+// 1. 创建定时器
+ret = LOS_SwtmrCreate(
+    1000,                          // 定时周期：1000个tick（通常是1000ms=1秒）
+    LOS_SWTMR_MODE_PERIOD,         // 模式：周期定时（反复触发）
+    timer1_timeout,                // 回调函数：定时器到期时执行这个函数
+    &timer_id1,                    // 返回的定时器ID（用于后续操作）
+    NULL                           // 传给回调函数的参数（这里不需要）
+);
+
+// 2. 判断创建是否成功
+if (ret == LOS_OK)
+{
+    // 3. 启动定时器
+    ret = LOS_SwtmrStart(timer_id1);
+    
+    // 4. 判断启动是否成功
+    if (ret != LOS_OK)
+    {
+        printf("start timer1 fail ret:0x%x\n", ret);
+        return;  // 启动失败，退出
+    }
+}
+
+LOS_SWTMR_MODE_PERIOD：周期模式，定时器会反复触发（另一种是 LOS_SWTMR_MODE_ONCE 单次触发）
+

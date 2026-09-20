@@ -1,0 +1,212 @@
+#include "ohos_init.h"
+#include "los_task.h"
+#include "los_mux.h"
+#include "los_tick.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/*******************************************************************************
+ * 全局变量定义
+ ******************************************************************************/
+#define TASK1_PRIO  25
+#define TASK2_PRIO  26
+
+// 控制标志
+static volatile int g_task2_running = 1;      // task2 运行标志
+static volatile int g_condition_trigger = 0;   // 条件触发标志
+
+// 任务ID
+static UINT32 g_task1_id = 0;
+static UINT32 g_task2_id = 0;
+
+// 互斥锁（保护共享资源）
+static MUX g_mux;
+static UINT32 g_mux_id = 0;
+
+/*******************************************************************************
+ * 辅助函数：打印分割线
+ ******************************************************************************/
+void print_separator(void)
+{
+    printf("========================================\n");
+}
+
+/*******************************************************************************
+ * 任务2：被控制的工作线程
+ ******************************************************************************/
+void task2_worker(void)
+{
+    int counter = 0;
+    
+    while (g_task2_running) {
+        // 获取互斥锁保护共享数据
+        LOS_MuxPend(g_mux_id, LOS_WAIT_FOREVER);
+        
+        // 打印任务信息
+        UINT32 id = LOS_CurTaskIDGet();
+        char *name = LOS_CurTaskNameGet();
+        UINT64 sysTime = LOS_TickCountGet();
+        
+        printf("[TASK2] ID:%u Name:%s Counter:%d Time:%llu\n", 
+               id, name, counter++, sysTime);
+        
+        // 释放互斥锁
+        LOS_MuxPost(g_mux_id);
+        
+        // 模拟工作
+        LOS_Msleep(1000);
+    }
+    
+    // 任务退出清理
+    printf("[TASK2] Task2 is exiting...\n");
+}
+
+/*******************************************************************************
+ * 任务1：控制线程（监控和控制任务2）
+ ******************************************************************************/
+void task1_controller(void)
+{
+    int control_counter = 0;
+    
+    printf("[TASK1] Controller task started!\n");
+    printf("[TASK1] Task2 ID: %u\n", g_task2_id);
+    
+    while (1) {
+        UINT64 sysTime = LOS_TickCountGet();
+        printf("[TASK1] Control loop iteration: %d, Time: %llu\n", 
+               ++control_counter, sysTime);
+        
+        // ============================================
+        // 条件判断1：每5次循环杀死 task2
+        // ============================================
+        if (control_counter % 5 == 0 && g_task2_running) {
+            printf("[TASK1] *** Condition met! Killing task2... ***\n");
+            
+            // 杀死 task2
+            UINT32 ret = LOS_TaskDelete(g_task2_id);
+            if (ret == LOS_OK) {
+                g_task2_running = 0;
+                printf("[TASK1] Task2 killed successfully!\n");
+            } else {
+                printf("[TASK1] Failed to kill task2, error: 0x%x\n", ret);
+            }
+            
+            print_separator();
+            LOS_Msleep(2000);
+            continue;
+        }
+        
+        // ============================================
+        // 条件判断2：如果 task2 已死，重新创建
+        // ============================================
+        if (!g_task2_running) {
+            printf("[TASK1] Task2 is dead, recreating...\n");
+            
+            // 重新创建 task2
+            TSK_INIT_PARAM_S task2_param = {0};
+            task2_param.pfnTaskEntry = (TSK_ENTRY_FUNC)task2_worker;
+            task2_param.uwStackSize = 2048;
+            task2_param.pcName = "task2_worker";
+            task2_param.usTaskPrio = TASK2_PRIO;
+            
+            UINT32 ret = LOS_TaskCreate(&g_task2_id, &task2_param);
+            if (ret == LOS_OK) {
+                g_task2_running = 1;
+                printf("[TASK1] Task2 recreated successfully! ID: %u\n", g_task2_id);
+            } else {
+                printf("[TASK1] Failed to recreate task2, error: 0x%x\n", ret);
+            }
+            
+            print_separator();
+            LOS_Msleep(2000);
+            continue;
+        }
+        
+        // ============================================
+        // 条件判断3：对 task2 执行延迟操作
+        // ============================================
+        if (control_counter % 3 == 0 && g_task2_running) {
+            printf("[TASK1] *** Suspend task2 for 3 seconds... ***\n");
+            
+            // 挂起 task2 3秒（注意：不能挂起自己）
+            if (g_task1_id != g_task2_id) {
+                UINT32 ret = LOS_TaskSuspend(g_task2_id);
+                if (ret == LOS_OK) {
+                    printf("[TASK1] Task2 suspended successfully!\n");
+                    
+                    // 延迟 3 秒后恢复
+                    LOS_Msleep(3000);
+                    
+                    ret = LOS_TaskResume(g_task2_id);
+                    if (ret == LOS_OK) {
+                        printf("[TASK1] Task2 resumed successfully!\n");
+                    } else {
+                        printf("[TASK1] Failed to resume task2, error: 0x%x\n", ret);
+                    }
+                } else {
+                    printf("[TASK1] Failed to suspend task2, error: 0x%x\n", ret);
+                }
+            }
+            
+            print_separator();
+        }
+        
+        // 主循环休眠
+        LOS_Msleep(2000);
+    }
+}
+
+/*******************************************************************************
+ * 系统任务创建总入口
+ ******************************************************************************/
+void VoltOS(void)
+{
+    UINT32 ret;
+    
+    // 1. 创建互斥锁
+    ret = LOS_MuxCreate(&g_mux);
+    if (ret != LOS_OK) {
+        printf("[MAIN] Failed to create mutex, error: 0x%x\n", ret);
+        return;
+    }
+    g_mux_id = ret;
+    printf("[MAIN] Mutex created! ID: %u\n", g_mux_id);
+    
+    // 2. 创建任务2（被控制的工作线程）
+    TSK_INIT_PARAM_S task2_param = {0};
+    task2_param.pfnTaskEntry = (TSK_ENTRY_FUNC)task2_worker;
+    task2_param.uwStackSize = 2048;
+    task2_param.pcName = "task2_worker";
+    task2_param.usTaskPrio = TASK2_PRIO;
+    
+    ret = LOS_TaskCreate(&g_task2_id, &task2_param);
+    if (ret == LOS_OK) {
+        g_task2_running = 1;
+        printf("[MAIN] Task2 created! ID: %u\n", g_task2_id);
+    } else {
+        printf("[MAIN] Failed to create task2, error: 0x%x\n", ret);
+        return;
+    }
+    
+    // 3. 创建任务1（控制线程）
+    TSK_INIT_PARAM_S task1_param = {0};
+    task1_param.pfnTaskEntry = (TSK_ENTRY_FUNC)task1_controller;
+    task1_param.uwStackSize = 2048;
+    task1_param.pcName = "task1_controller";
+    task1_param.usTaskPrio = TASK1_PRIO;
+    
+    ret = LOS_TaskCreate(&g_task1_id, &task1_param);
+    if (ret == LOS_OK) {
+        printf("[MAIN] Task1 created! ID: %u\n", g_task1_id);
+    } else {
+        printf("[MAIN] Failed to create task1, error: 0x%x\n", ret);
+        return;
+    }
+    
+    printf("[MAIN] All tasks created successfully!\n");
+    print_separator();
+}
+
+// 系统初始化
+APP_FEATURE_INIT(VoltOS);

@@ -1,0 +1,23 @@
+static_library("VOLTEXAM") {
+    sources = [
+        "exam.c",
+        "src/main.c",
+        "src/ltc2944.c",
+        "src/sht30.c",
+        "src/bh1750.c",
+        "src/lcd.c",
+    ]
+
+    include_dirs = [
+        "//utils/native/lite/include",
+        "//third_party/musl/porting/liteos_m/kernel/include",
+        "//device/rockchip/rk2206/adapter/incinclude",
+        "//device/rockchip/rk2206/sdk_liteos/board/include",
+        "inc",
+        "/home/volt/lockzhiner-rk2206-openharmony3.0lts/base/iot_hardware/peripheral/interfaces/kits",
+    ]
+
+    deps = [
+        "//device/rockchip/hardware:hardware",
+    ]
+}
